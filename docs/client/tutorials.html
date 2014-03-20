@@ -1,0 +1,27 @@
+
+
+<template name="tutorials">
+Dynamically tell time. 
+First we create the "clock" metor app
+
+
+This creates a directory that looks like this:
+
+
+In the client dir, create an app.js file with these pieces:
+A route, to let meteor know that the root of your clock app should show the clock.html template (we'll get to that later).
+
+A helper that can be referenced from the clock.html template 
+
+And a timer function that sets the "currentTime" field of the Session pbject:
+
+
+
+Finally, the clock.html file looks like this, with just a reference to the Session data 
+
+And that is all there is to it! You can fire up the server with
+And view it in your browser
+
+Footnote: the use of a helper isnt strictly necessary - we could have referenced the session data directly from the clock.html template - but the helper lets us change our implementation without changing all the view code that depends on it - which seems like a good practice to me. 
+
+</template >
