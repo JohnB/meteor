@@ -1,27 +1,54 @@
 
 
 <template name="tutorials">
-Dynamically tell time. 
-First we create the "clock" metor app
+    <h1 id="dynamicallyTellTime">Dynamically tell time</h1>
 
+First we create the "clock" metor app
+```
+    meteor create clock
+```
 
 This creates a directory that looks like this:
+    ```
+idrwxr-xr-x   5 john  staff   170 Mar 20 08:37 .meteor
+-rw-r--r--   1 john  staff    31 Mar 20 08:37 clock.css
+-rw-r--r--   1 john  staff   184 Mar 20 08:37 clock.html
+-rw-r--r--   1 john  staff   423 Mar 20 08:37 clock.js
+    ```
+Replace the clock.js file with this:
+```
+if (Meteor.isClient) {
+    Template.hello.greeting = function () {
+        return Session.get("clock");
+    };
 
+    setInterval( function() {
+        var date = new Date();
+        Session.set("clock", date.toTimeString() );
+    },1000);
+}
+```
 
-In the client dir, create an app.js file with these pieces:
-A route, to let meteor know that the root of your clock app should show the clock.html template (we'll get to that later).
+And remove two lines from clock.html so it looks like this:
+```
+<head>
+    <title>clock</title>
+</head>
 
-A helper that can be referenced from the clock.html template 
+<body>
+    {{> hello}}
+</body>
 
-And a timer function that sets the "currentTime" field of the Session pbject:
+<template name="hello">
+    {{greeting}}
+</template>
+```
 
+And that is all there is to it! You can now start the server with:
+```
+    meteor
+```
 
-
-Finally, the clock.html file looks like this, with just a reference to the Session data 
-
-And that is all there is to it! You can fire up the server with
-And view it in your browser
-
-Footnote: the use of a helper isnt strictly necessary - we could have referenced the session data directly from the clock.html template - but the helper lets us change our implementation without changing all the view code that depends on it - which seems like a good practice to me. 
+<a href="http://localhost:3000/">And then click here to view it in your browser</a>
 
 </template >
