@@ -87,7 +87,7 @@ _.extend(LivedataTest.ClientStream.prototype, {
   on: function (name, callback) {
     var self = this;
 
-    if (name !== 'message' && name !== 'reset')
+    if (name !== 'message' && name !== 'reset' && name !== 'disconnect')
       throw new Error("unknown event type: " + name);
 
     if (!self.eventCallbacks[name])
@@ -135,6 +135,10 @@ _.extend(LivedataTest.ClientStream.prototype, {
 
     if (options.url) {
       self._changeUrl(options.url);
+    }
+
+    if (options._sockjsOptions) {
+      self.options._sockjsOptions = options._sockjsOptions;
     }
 
     if (self.currentStatus.connected) {

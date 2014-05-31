@@ -1,85 +1,454 @@
 ## v.NEXT
 
-* Meteor developer accounts
-  - `accounts-meteor-developer` package for OAuth support
-  - managing deployed apps with developer accounts instead of site
-    passwords.
-  - New commands: 'meteor authorized', 'meteor claim', 'meteor logout',
-    'meteor whoami'
+* The `findAll` method on template instances now returns a vanilla
+  array, not a jQuery object.  #2039
 
-* oplog improvements
-  - support all operators except $where and $near. still not used for
-    limit and skip
-  - more optimizations to avoid needless data fetches from MongoDB
-  - fix "Cannot call method 'has' of null" error #1767
+* Speed up updates of NPM modules by upgrading Node to include our fix for
+  https://github.com/npm/npm/issues/3265 instead of passing `--force` to
+  `npm install`.
 
-* Minimongo improvements
-  - support $comment
-  - support 'obj' name in $where
-  - $regexp matches actual regexps properly
-  - better support for $nin, $ne, $not
-  - support using { $in: [/foo/, /bar/] }. #1707
-  - support {$exists: false}
-  - better type-checking for selectors
-  - support {x: {$elemMatch: {$gt: 5}}}
-  - match mongo's behavior better when there are arrays in the document
-  - support $near with sort
-  - implement updates with { $set: { 'a.$.b': 5 } }
-  - {$type: 4} queries
-  - optimize `remove({})` when observers are paused
-  - make update-by-id constant time
+* Run server tests from multiple clients serially instead of in
+  parallel. This allows testing features that modify global server
+  state.  #2088
 
-* Add `clientAddress` and `httpHeaders` to `this.connection` in method
-  calls and publish functions.
+* Add Content-Type headers on JavaScript and CSS resources.
 
-* Hash login tokens before storing them in the database. Legacy unhashed
-  tokens are upgraded to hashed tokens in the database as they are used
-  in logins.
+* Add `X-Content-Type-Options: nosniff` header to
+  `browser-policy-content`'s default policy. If you are using
+  `browser-policy-content` and you don't want your app to send this
+  header, then call `BrowserPolicy.content.allowContentTypeSniffing()`.
 
-* Cursors with a field specifier containing `{_id: 0}` can no longer be used
-  with `observeChanges` or `observe`. This includes the implicit calls to these
-  functions that are done when returning a cursor from a publish function or
-  using `{{#each}}`.
+* Fix memory leak (introduced in 0.8.1) by making sure to unregister
+  sessions at the server when they are closed due to heartbeat timeout.
 
-* Transform functions must return objects and may not change the `_id` field
-  (though they may leave it out)
+* Fix hardcoded Twitter URL in `oauth1` package. This fixes a regression
+  in 0.8.0.1 that broke Atmosphere packages that do OAuth1
+  logins. #2154.
 
-* XXX sourcemaps support for stylesheets, including less sourcemaps
-* XXX css linting (breaks on errors)
-* XXX css preprocessing to concatenate files correctly (pulls @imports to the
-  beginning)
-* XXX supports `.import.less` and `.import.styl` to prevent Meteor processing
-  stylesheets. `.lessimport` is deprecated
+* Add `credentialSecret` argument to `Google.retrieveCredential`, which
+  was forgotten in a previous release.
 
-* Patch Underscore to not treat plain objects (`x.constructor === Object`)
-  with numeric `length` fields as arrays.  Among other things, this allows you
-  to use documents with numeric `length` fields with Mongo.  #594 #1737
+* Fix a Blaze memory leak by cleaning up event handlers when a template
+  instance is destroyed. #1997
 
-* Fix races when calling login and/or logoutOtherClients from multiple
-  tabs. #1616
+* Allow `check` to work on the server outside of a Fiber. #2136
 
-* Upgrade `jquery-waypoints` package from 1.1.7 to 2.0.3. (Contains
-  backward-incompatible changes).
+* EJSON custom type conversion functions should not be permitted to yield. #2136
 
-* Add `frame-src` to `browser-policy-content` and account for
-  cross-browser CSP disparities.
+* The legacy polling observe driver handles errors communicating with MongoDB
+  better and no longer gets "stuck" in some circumstances.
 
-* Upgrade CoffeeScript from 1.6.3 to 1.7.1.
+* Add {{> UI.dynamic}} to make it easier to dynamically render a
+  template with a data context. XXX Update "Using Blaze" wiki page.
 
-* Make sure that `api.add_files('foo.coffee', {bare: true})` works when
-  adding CoffeeScript files. #1668
+* Show the display name of the currently logged-in user after following
+  a verification link or password reset link in `accounts-ui`.
 
-* `force-ssl`: don't require SSL during `meteor run` in IPv6
-  environments. #1751
+* Use `Meteor.absoluteUrl()` to compute the redirect URI in `force-ssl`
+  instead of the host header.
 
 * Upgraded dependencies:
-  - node from 0.10.22 to 0.10.25 (removed workaround from 0.7.0 -- now
-    support 0.10.25+)
-  - Upgrade jQuery from 1.8.2 to 1.10.2.
-    XXX see http://jquery.com/upgrade-guide/1.9/ for incompatibilities
-    XXX consider taking 1.11 instead, which was released this week
-  - source-map from 0.3.30 to 0.3.32  #1782
-  - websocket-driver from 0.3.1 to 0.3.2
+  - node: 0.10.28 (from 0.10.26)
+  - uglify-js: 2.4.13 (from 2.4.7)
+
+Patches contributed by GitHub users awwx, subhog
+
+
+## v.0.8.1.3
+
+* Fix a security issue in the `spiderable` package. `spiderable` now
+  uses the ROOT_URL environment variable instead of the Host header to
+  determine which page to snapshot.
+
+* Fix hardcoded Twitter URL in `oauth1` package. This fixes a regression
+  in 0.8.0.1 that broke Atmosphere packages that do OAuth1
+  logins. #2154.
+
+* Add `credentialSecret` argument to `Google.retrieveCredential`, which
+  was forgotten in a previous release.
+
+* Remove nonexistent `-a` and `-r` aliases for `--add` and `--remove` in
+  `meteor help authorized`. #2155
+
+* Add missing `underscore` dependency in the `oauth-encryption` package. #2165
+
+* Work around IE8 bug that caused some apps to fail to render when
+  minified. #2037.
+
+
+## v.0.8.1.2
+
+* Fix memory leak (introduced in 0.8.1) by making sure to unregister
+  sessions at the server when they are closed due to heartbeat timeout.
+
+* Add `credentialSecret` argument to `Google.retrieveCredential`,
+  `Facebook.retrieveCredential`, etc., which is needed to use them as of
+  0.8.1. #2118
+
+* Fix 0.8.1 regression that broke apps using a `ROOT_URL` with a path
+  prefix. #2109
+
+
+## v0.8.1.1
+
+* Fix 0.8.1 regression preventing clients from specifying `_id` on insert. #2097
+
+* Fix handling of malformed URLs when merging CSS files. #2103, #2093
+
+* Loosen the checks on the `options` argument to `Collection.find` to
+  allow undefined values.
+
+
+## v0.8.1
+
+#### Meteor Accounts
+
+* Fix a security flaw in OAuth1 and OAuth2 implementations. If you are
+  using any OAuth accounts packages (such as `accounts-google` or
+  `accounts-twitter`), we recommend that you update immediately and log
+  out your users' current sessions with the following MongoDB command:
+
+    $ db.users.update({}, { $set: { 'services.resume.loginTokens': [] } }, { multi: true });
+
+* OAuth redirect URLs are now required to be on the same origin as your app.
+
+* Log out a user's other sessions when they change their password.
+
+* Store pending OAuth login results in the database instead of
+  in-memory, so that an OAuth flow succeeds even if different requests
+  go to different server processes.
+
+* When validateLoginAttempt callbacks return false, don't override a more
+  specific error message.
+
+* Add `Random.secret()` for generating security-critical secrets like
+  login tokens.
+
+* `Meteor.logoutOtherClients` now calls the user callback when other
+  login tokens have actually been removed from the database, not when
+  they have been marked for eventual removal.  #1915
+
+* Rename `Oauth` to `OAuth`.  `Oauth` is now an alias for backwards
+  compatibility.
+
+* Add `oauth-encryption` package for encrypting sensitive account
+  credentials in the database.
+
+* A validate login hook can now override the exception thrown from
+  `beginPasswordExchange` like it can for other login methods.
+
+* Remove an expensive observe over all users in the `accounts-base`
+  package.
+
+
+#### Blaze
+
+* Disallow `javascript:` URLs in URL attribute values by default, to
+  help prevent cross-site scripting bugs. Call
+  `UI._allowJavascriptUrls()` to allow them.
+
+* Fix `UI.toHTML` on templates containing `{{#with}}`.
+
+* Fix `{{#with}}` over a data context that is mutated.  #2046
+
+* Clean up autoruns when calling `UI.toHTML`.
+
+* Properly clean up event listeners when removing templates.
+
+* Add support for `{{!-- block comments --}}` in Spacebars. Block comments may
+  contain `}}`, so they are more useful than `{{! normal comments}}` for
+  commenting out sections of Spacebars templates.
+
+* Don't dynamically insert `<tbody>` tags in reactive tables
+
+* When handling a custom jQuery event, additional arguments are
+  no longer lost -- they now come after the template instance
+  argument.  #1988
+
+
+#### DDP and MongoDB
+
+* Extend latency compensation to support an arbitrary sequence of
+  inserts in methods.  Previously, documents created inside a method
+  stub on the client would eventually be replaced by new documents
+  from the server, causing the screen to flicker.  Calling `insert`
+  inside a method body now generates the same ID on the client (inside
+  the method stub) and on the server.  A sequence of inserts also
+  generates the same sequence of IDs.  Code that wants a random stream
+  that is consistent between method stub and real method execution can
+  get one with `DDP.randomStream`.
+  https://trello.com/c/moiiS2rP/57-pattern-for-creating-multiple-database-records-from-a-method
+
+* The document passed to the `insert` callback of `allow` and `deny` now only
+  has a `_id` field if the client explicitly specified one; this allows you to
+  use `allow`/`deny` rules to prevent clients from specifying their own
+  `_id`. As an exception, `allow`/`deny` rules with a `transform` always have an
+  `_id`.
+
+* DDP now has an implementation of bidirectional heartbeats which is consistent
+  across SockJS and websocket transports. This enables connection keepalive and
+  allows servers and clients to more consistently and efficiently detect
+  disconnection.
+
+* The DDP protocol version number has been incremented to "pre2" (adding
+  randomSeed and heartbeats).
+
+* The oplog observe driver handles errors communicating with MongoDB
+  better and knows to re-poll all queries after a MongoDB failover.
+
+* Fix bugs involving mutating DDP method arguments.
+
+
+#### meteor command-line tool
+
+* Move boilerplate HTML from tools to webapp.  Change internal
+  `Webapp.addHtmlAttributeHook` API.
+
+* Add `meteor list-sites` command for listing the sites that you have
+  deployed to meteor.com with your Meteor developer account.
+
+* Third-party template languages can request that their generated source loads
+  before other JavaScript files, just like *.html files, by passing the
+  isTemplate option to Plugin.registerSourceHandler.
+
+* You can specify a particular interface for the dev mode runner to bind to with
+  `meteor -p host:port`.
+
+* Don't include proprietary tar tags in bundle tarballs.
+
+* Convert relative URLs to absolute URLs when merging CSS files.
+
+
+#### Upgraded dependencies
+
+* Node.js from 0.10.25 to 0.10.26.
+* MongoDB driver from 1.3.19 to 1.4.1
+* stylus: 0.42.3 (from 0.42.2)
+* showdown: 0.3.1
+* css-parse: an unreleased version (from 1.7.0)
+* css-stringify: an unreleased version (from 1.4.1)
+
+
+Patches contributed by GitHub users aldeed, apendua, arbesfeld, awwx, dandv,
+davegonzalez, emgee3, justinsb, mquandalle, Neftedollar, Pent, sdarnell,
+and timhaines.
+
+
+## v0.8.0.1
+
+* Fix security flaw in OAuth1 implementation. Clients can no longer
+  choose the callback_url for OAuth1 logins.
+
+
+## v0.8.0
+
+Meteor 0.8.0 introduces Blaze, a total rewrite of our live templating engine,
+replacing Spark. Advantages of Blaze include:
+
+  * Better interoperability with jQuery plugins and other techniques which
+    directly manipulate the DOM
+  * More fine-grained updates: only the specific elements or attributes that
+    change are touched rather than the entire template
+  * A fully documented templating language
+  * No need for the confusing `{{#constant}}`, `{{#isolate}}`, and `preserve`
+    directives
+  * Uses standard jQuery delegation (`.on`) instead of our custom implementation
+  * Blaze supports live SVG templates that work just like HTML templates
+
+See
+[the Using Blaze wiki page](https://github.com/meteor/meteor/wiki/Using-Blaze)
+for full details on upgrading your app to 0.8.0.  This includes:
+
+* The `Template.foo.rendered` callback is now only called once when the template
+  is rendered, rather than repeatedly as it is "re-rendered", because templates
+  now directly update changed data instead of fully re-rendering.
+
+* The `accounts-ui` login buttons are now invoked as a `{{> loginButtons}}`
+  rather than as `{{loginButtons}}`.
+
+* Previous versions of Meteor used a heavily modified version of the Handlebars
+  templating language. In 0.8.0, we've given it its own name: Spacebars!
+  Spacebars has an
+  [explicit specification](https://github.com/meteor/meteor/blob/devel/packages/spacebars/README.md)
+  instead of being defined as a series of changes to Handlebars. There are some
+  incompatibilities with our previous Handlebars fork, such as a
+  [different way of specifying dynamic element attributes](https://github.com/meteor/meteor/blob/devel/packages/spacebars/README.md#in-attribute-values)
+  and a
+  [new way of defining custom block helpers](https://github.com/meteor/meteor/blob/devel/packages/spacebars/README.md#custom-block-helpers).
+
+* Your template files must consist of
+  [well-formed HTML](https://github.com/meteor/meteor/blob/devel/packages/spacebars/README.md#html-dialect). Invalid
+  HTML is now a compilation failure.  (There is a current limitation in our HTML
+  parser such that it does not support
+  [omitting end tags](http://www.w3.org/TR/html5/syntax.html#syntax-tag-omission)
+  on elements such as `<P>` and `<LI>`.)
+
+* `Template.foo` is no longer a function. It is instead a
+  "component". Components render to an intermediate representation of an HTML
+  tree, not a string, so there is no longer an easy way to render a component to
+  a static HTML string.
+
+* `Meteor.render` and `Spark.render` have been removed. Use `UI.render` and
+  `UI.insert` instead.
+
+* The `<body>` tag now defines a template just like the `<template>` tag, which
+  can have helpers and event handlers.  Define them directly on the object
+  `UI.body`.
+
+* Previous versions of Meteor shipped with a synthesized `tap` event,
+  implementing a zero-delay click event on mobile browsers. Unfortunately, this
+  event never worked very well. We're eliminating it. Instead, use one of the
+  excellent third party solutions.
+
+* The `madewith` package (which supported adding a badge to your website
+  displaying its score from http://madewith.meteor.com/) has been removed, as it
+  is not compatible with the new version of that site.
+
+* The internal `spark`, `liverange`, `universal-events`, and `domutils` packages
+  have been removed.
+
+* The `Handlebars` namespace has been deprecated.  `Handlebars.SafeString` is
+  now `Spacebars.SafeString`, and `Handlebars.registerHelper` is now
+  `UI.registerHelper`.
+
+Patches contributed by GitHub users cmather and mart-jansink.
+
+
+## v0.7.2
+
+* Support oplog tailing on queries with the `limit` option. All queries
+  except those containing `$near` or `$where` selectors or the `skip`
+  option can now be used with the oplog driver.
+
+* Add hooks to login process: `Accounts.onLogin`,
+  `Accounts.onLoginFailure`, and `Accounts.validateLoginAttempt`. These
+  functions allow for rate limiting login attempts, logging an audit
+  trail, account lockout flags, and more. See:
+  http://docs.meteor.com/#accounts_validateloginattempt #1815
+
+* Change the `Accounts.registerLoginHandler` API for custom login
+  methods. Login handlers now require a name and no longer have to deal
+  with generating resume tokens. See
+  https://github.com/meteor/meteor/blob/devel/packages/accounts-base/accounts_server.js
+  for details. OAuth based login handlers using the
+  `Oauth.registerService` packages are not affected.
+
+* Add support for HTML email in `Accounts.emailTemplates`.  #1785
+
+* minimongo: Support `{a: {$elemMatch: {x: 1, $or: [{a: 1}, {b: 1}]}}}`  #1875
+
+* minimongo: Support `{a: {$regex: '', $options: 'i'}}`  #1874
+
+* minimongo: Fix sort implementation with multiple sort fields which each look
+  inside an array. eg, ensure that with sort key `{'a.x': 1, 'a.y': 1}`, the
+  document `{a: [{x: 0, y: 4}]}` sorts before
+  `{a: [{x: 0, y: 5}, {x: 1, y: 3}]}`, because the 3 should not be used as a
+  tie-breaker because it is not "next to" the tied 0s.
+
+* minimongo: Fix sort implementation when selector and sort key share a field,
+  that field matches an array in the document, and only some values of the array
+  match the selector. eg, ensure that with sort key `{a: 1}` and selector
+  `{a: {$gt: 3}}`, the document `{a: [4, 6]}` sorts before `{a: [1, 5]}`,
+  because the 1 should not be used as a sort key because it does not match the
+  selector. (We only approximate the MongoDB behavior here by only supporting
+  relatively selectors.)
+
+* Use `faye-websocket` (0.7.2) npm module instead of `websocket` (1.0.8) for
+  server-to-server DDP.
+
+* Update Google OAuth package to use new `profile` and `email` scopes
+  instead of deprecated URL-based scopes.  #1887
+
+* Add `_throwFirstError` option to `Deps.flush`.
+
+* Make `facts` package data available on the server as
+  `Facts._factsByPackage`.
+
+* Fix issue where `LESS` compilation error could crash the `meteor run`
+  process.  #1877
+
+* Fix crash caused by empty HTTP host header in `meteor run` development
+  server.  #1871
+
+* Fix hot code reload in private browsing mode in Safari.
+
+* Fix appcache size calculation to avoid erronious warnings. #1847
+
+* Remove unused `Deps._makeNonReactive` wrapper function. Call
+  `Deps.nonreactive` directly instead.
+
+* Avoid setting the `oplogReplay` on non-oplog collections. Doing so
+  caused mongod to crash.
+
+* Add startup message to `test-in-console` to ease automation. #1884
+
+* Upgraded dependencies
+  - amplify: 1.1.2 (from 1.1.0)
+
+Patches contributed by GitHub users awwx, dandv, queso, rgould, timhaines, zol
+
+
+## v0.7.1.2
+
+* Fix bug in tool error handling that caused `meteor` to crash on Mac
+  OSX when no computer name is set.
+
+* Work around a bug that caused MongoDB to fail an assertion when using
+  tailable cursors on non-oplog collections.
+
+
+## v0.7.1.1
+
+* Integrate with Meteor developer accounts, a new way of managing your
+  meteor.com deployed sites. When you use `meteor deploy`, you will be
+  prompted to create a developer account.
+    - Once you've created a developer account, you can log in and out
+      from the command line with `meteor login` and `meteor logout`.
+    - You can claim legacy sites with `meteor claim`. This command will
+      prompt you for your site password if you are claiming a
+      password-protected site; after claiming it, you will not need to
+      enter the site password again.
+    - You can add or remove authorized users, and view the list of
+      authorized users, for a site with `meteor authorized`.
+    - You can view your current username with `meteor whoami`.
+    - This release also includes the `accounts-meteor-developer` package
+      for building Meteor apps that allow users to log in with their own
+      developer accounts.
+
+* Improve the oplog tailing implementation for getting real-time database
+  updates from MongoDB.
+    - Add support for all operators except `$where` and `$near`. Limit and
+      skip are not supported yet.
+    - Add optimizations to avoid needless data fetches from MongoDB.
+    - Fix an error ("Cannot call method 'has' of null") in an oplog
+      callback. #1767
+
+* Add and improve support for minimongo operators.
+  - Support `$comment`.
+  - Support `obj` name in `$where`.
+  - `$regex` matches actual regexps properly.
+  - Improve support for `$nin`, `$ne`, `$not`.
+  - Support using `{ $in: [/foo/, /bar/] }`. #1707
+  - Support `{$exists: false}`.
+  - Improve type-checking for selectors.
+  - Support `{x: {$elemMatch: {$gt: 5}}}`.
+  - Match Mongo's behavior better when there are arrays in the document.
+  - Support `$near` with sort.
+  - Implement updates with `{ $set: { 'a.$.b': 5 } }`.
+  - Support `{$type: 4}` queries.
+  - Optimize `remove({})` when observers are paused.
+  - Make update-by-id constant time.
+  - Allow `{$set: {'x._id': 1}}`.  #1794
+
+* Upgraded dependencies
+  - node: 0.10.25 (from 0.10.22). The workaround for specific Node
+    versions from 0.7.0 is now removed; 0.10.25+ is supported.
+  - jquery: 1.11.0 (from 1.8.2). See
+    http://jquery.com/upgrade-guide/1.9/ for upgrade instructions.
+  - jquery-waypoints: 2.0.4 (from 1.1.7). Contains
+    backwards-incompatible changes.
+  - source-map: 0.3.2 (from 0.3.30) #1782
+  - websocket-driver: 0.3.2 (from 0.3.1)
   - http-proxy: 1.0.2 (from a pre-release fork of 1.0)
   - semver: 2.2.1 (from 2.1.0)
   - request: 2.33.0 (from 2.27.0)
@@ -90,68 +459,138 @@
   - source-map-support: 0.2.5 (from 0.2.3)
   - mongo: 2.4.9 (from 2.4.8)
   - openssl in mongo: 1.0.1f (from 1.0.1e)
-  - kexec from 0.1.1 to 0.2.0
-  - drop shell-quote from dev bundle
-  -  XXX upgraded `less` from 1.3.3 to 1.6.1
-  - XXX upgraded `stylus` from 0.37.0 to 0.42.2 and `nib` from `1.0.0` to `1.0.2`
+  - kexec: 0.2.0 (from 0.1.1)
+  - less: 1.6.1 (from 1.3.3)
+  - stylus: 0.42.2 (from 0.37.0)
+  - nib: 1.0.2 (from 1.0.0)
+  - coffeescript: 1.7.1 (from 1.6.3)
 
-* Types added with `EJSON.addType` now have default `clone` and `equals`
-  implementations.  #1745
+* CSS preprocessing and sourcemaps:
+  - Add sourcemap support for CSS stylesheet preprocessors. Use
+    sourcemaps for stylesheets compiled with LESS.
+  - Improve CSS minification to deal with `@import` statements correctly.
+  - Lint CSS files for invalid `@` directives.
+  - Change the recommended suffix for imported LESS files from
+    `.lessimport` to `.import.less`. Add `.import.styl` to allow
+    `stylus` imports. `.lessimport` continues to work but is deprecated.
 
-* Allow cursors on named local collections to be returned from arrays in publish
-  functions.  #1820
+* Add `clientAddress` and `httpHeaders` to `this.connection` in method
+  calls and publish functions.
 
-* Don't lose permissions (eg, executable bit) on npm files.  #1808
-
-* Detect if CSS failed to load and refresh.
-
-* Don't crash with an empty programs/foo directory or one without a
-  package.js.
-
-* Do a better job of handling shrinkwrap files when a npm module depends
-  on something that isn't a semver. #1684
-
-* In email package, print a message in dev mode when email is not sent. #1196
-
-* Meteor accounts logins (or anything else using the `localstorage` package) no
-  longer persist in IE7.
-
-* Fix `accounts-password` login with private-browsing Safari (and
-  generally, the use of the `localstorage` package). #1291
-
-* New `retry` package.
-
-* Pass through `update` and `remove` return values for validated
-  operations. #1759
+* Hash login tokens before storing them in the database. Legacy unhashed
+  tokens are upgraded to hashed tokens in the database as they are used
+  in login requests.
 
 * Change default accounts-ui styling and add more CSS classes.
 
-* Don't leak sockets on error in dev-mode proxy.
+* Refactor command-line tool. Add test harness and better tests. Run
+  `meteor self-test --help` for info on running the tools test suite.
 
-* XXX Make springboard actually exec
+* Speed up application re-build in development mode by re-using file
+  hash computation between file change watching code and application
+  build code..
 
-* Speed up build by re-using file hashes.
+* Fix issues with documents containing a key named `length` with a
+  numeric value. Underscore treated these as arrays instead of objects,
+  leading to exceptions when . Patch Underscore to not treat plain
+  objects (`x.constructor === Object`) with numeric `length` fields as
+  arrays. #594 #1737
 
-* Include oauth_verifier as a header rather than a parameter in
-  `oauth1` package. #1825
+* Deprecate `Accounts.loginServiceConfiguration` in favor of
+  `ServiceConfiguration.configurations`, exported by the
+  `service-configuration` package. `Accounts.loginServiceConfiguration`
+  is maintained for backwards-compatibility, but it is defined in a
+  `Meteor.startup` block and so cannot be used from top-level code.
 
-* Refactor command-line tool. Add test harness and better tests.
+* Cursors with a field specifier containing `{_id: 0}` can no longer be
+  used with `observeChanges` or `observe`. This includes the implicit
+  calls to these functions that are done when returning a cursor from a
+  publish function or using `{{#each}}`.
 
-* Add `Accounts.connection` for using Meteor accounts packages with a
-  non-default DDP connection.
+* Transform functions must return objects and may not change the `_id`
+  field, though they may leave it out.
 
-* Fix order of setting login token and setting user id on a connection.
+* Remove broken IE7 support from the `localstorage` package. Meteor
+  accounts logins no longer persist in IE7.
+
+* Fix the `localstorage` package when used with Safari in private
+  browsing mode. This fixes a problem with login token storage and
+  account login. #1291
+
+* Types added with `EJSON.addType` now have default `clone` and `equals`
+  implementations. Users may still specify `clone` or `equals` functions
+  to override the default behavior.  #1745
+
+* Add `frame-src` to `browser-policy-content` and account for
+  cross-browser CSP disparities.
+
+* Deprecate `Oauth.initiateLogin` in favor of `Oauth.showPopup`.
+
+* Add `WebApp.rawConnectHandlers` for adding connect handlers that run
+  before any other Meteor handlers, except `connect.compress()`. Raw
+  connect handlers see the URL's full path (even if ROOT_URL contains a
+  non-empty path) and they run before static assets are served.
+
+* Add `Accounts.connection` to allow using Meteor accounts packages with
+  a non-default DDP connection.
+
+* Detect and reload if minified CSS files fail to load at startup. This
+  prevents the application from running unstyled if the page load occurs
+  while the server is switching versions.
+
+* Allow Npm.depends to specify any http or https URL containing a full
+  40-hex-digit SHA.  #1686
+
+* Add `retry` package for connection retry with exponential backoff.
+
+* Pass `update` and `remove` return values correctly when using
+  collections validated with `allow` and `deny` rules. #1759
 
 * If you're using Deps on the server, computations and invalidation
-  functions are not allowed to yield.
+  functions are not allowed to yield. Throw an error instead of behaving
+  unpredictably.
+
+* Fix namespacing in coffeescript files added to a package with the
+  `bare: true` option. #1668
+
+* Fix races when calling login and/or logoutOtherClients from multiple
+  tabs. #1616
+
+* Include oauth_verifier as a header rather than a parameter in
+  the `oauth1` package. #1825
+
+* Fix `force-ssl` to allow local development with `meteor run` in IPv6
+  environments. #1751`
+
+* Allow cursors on named local collections to be returned from a publish
+  function in an array.  #1820
+
+* Fix build failure caused by a directory in `programs/` without a
+  package.js file.
+
+* Do a better job of handling shrinkwrap files when an npm module
+  depends on something that isn't a semver. #1684
+
+* Fix failures updating npm dependencies when a node_modules directory
+  exists above the project directory.  #1761
+
+* Preserve permissions (eg, executable bit) on npm files.  #1808
 
 * SockJS tweak to support relative base URLs.
 
-* Oauth.initiateLogin is deprecated in favor of Oauth.showPopup.
+* Don't leak sockets on error in dev-mode proxy.
 
-* User-supplied connect handlers now see the URL's full path, even if
-  ROOT_URL contains a non-empty path.
+* Clone arguments to `added` and `changed` methods in publish
+  functions. This allows callers to reuse objects and prevents already
+  published data from changing after the fact.  #1750
 
+* Ensure springboarding to a different meteor tools version always uses
+  `exec` to run the old version. This simplifies process management for
+  wrapper scripts.
+
+Patches contributed by GitHub users DenisGorbachev, EOT, OyoKooN, awwx,
+dandv, icellan, jfhamlin, marcandre, michaelbishop, mitar, mizzao,
+mquandalle, paulswartz, rdickert, rzymek, timhaines, and yeputons.
 
 
 ## v0.7.0.1
@@ -261,8 +700,6 @@ apply the patch and will instead disable websockets.
 
 * Increase the maximum size spiderable will return for a page from 200kB
   to 5MB.
-
-* New 'facts' package publishes internal statistics about Meteor.
 
 * Upgraded dependencies:
   * SockJS server from 0.3.7 to 0.3.8, including new faye-websocket module.

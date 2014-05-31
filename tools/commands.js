@@ -6,13 +6,14 @@ var files = require('./files.js');
 var deploy = require('./deploy.js');
 var library = require('./library.js');
 var buildmessage = require('./buildmessage.js');
+var unipackage = require('./unipackage.js');
 var project = require('./project.js');
 var warehouse = require('./warehouse.js');
 var auth = require('./auth.js');
 var config = require('./config.js');
 var release = require('./release.js');
 var Future = require('fibers/future');
-var runLog = require('./run-log.js').runLog;
+var runLog = require('./run-log.js');
 
 // Given a site name passed on the command line (eg, 'mysite'), return
 // a fully-qualified hostname ('mysite.meteor.com').
@@ -152,8 +153,8 @@ main.registerCommand({
   name: 'run',
   requiresApp: true,
   options: {
-    port: { type: Number, short: "p", default: 3000 },
-    'app-port': { type: Number },
+    port: { type: String, short: "p", default: '3000' },
+    'app-port': { type: String },
     production: { type: Boolean },
     'raw-logs': { type: Boolean },
     settings: { type: String },
@@ -165,6 +166,32 @@ main.registerCommand({
     once: { type: Boolean }
   }
 }, function (options) {
+  // XXX factor this out into a {type: host/port}?
+  var portMatch = options.port.match(/^(?:(.+):)?([0-9]+)$/);
+  if (!portMatch) {
+    process.stderr.write(
+"run: --port (-p) must be a number or be of the form 'host:port' where\n" +
+"port is a number. Try 'meteor help run' for help.\n");
+    return 1;
+  }
+  var proxyHost = portMatch[1] || null;
+  var proxyPort = parseInt(portMatch[2]);
+
+  var appHost, appPort;
+  if (options['app-port']) {
+    var appPortMatch = options['app-port'].match(/^(?:(.+):)?([0-9]+)?$/);
+    if (!appPortMatch) {
+      process.stderr.write(
+"run: --app-port must be a number or be of the form 'host:port' where\n" +
+"port is a number. Try 'meteor help run' for help.\n");
+      return 1;
+    }
+    appHost = appPortMatch[1] || null;
+    // It's legit to specify `--app-port host:` and still let the port be
+    // randomized.
+    appPort = appPortMatch[2] ? parseInt(appPortMatch[2]) : null;
+  }
+
   if (release.forced) {
     var appRelease = project.getMeteorReleaseVersion(options.appDir);
     if (release.current.name !== appRelease) {
@@ -181,8 +208,10 @@ main.registerCommand({
 
   var runAll = require('./run-all.js');
   return runAll.run(options.appDir, {
-    port: options.port,
-    appPort: options['app-port'],
+    proxyPort: proxyPort,
+    proxyHost: proxyHost,
+    appPort: appPort,
+    appHost: appHost,
     settingsFile: options.settings,
     program: options.program || undefined,
     buildOptions: {
@@ -620,6 +649,7 @@ main.registerCommand({
   requiresApp: true,
   options: {
     debug: { type: Boolean },
+    directory: { type: Boolean },
     // Undocumented
     'for-deploy': { type: Boolean }
   }
@@ -635,8 +665,9 @@ main.registerCommand({
   // machines, but worth it for humans)
 
   var buildDir = path.join(options.appDir, '.meteor', 'local', 'build_tar');
-  var bundlePath = path.join(buildDir, 'bundle');
   var outputPath = path.resolve(options.args[0]); // get absolute path
+  var bundlePath = options['directory'] ?
+      outputPath : path.join(buildDir, 'bundle');
 
   var bundler = require(path.join(__dirname, 'bundler.js'));
   var bundleResult = bundler.bundle({
@@ -653,11 +684,13 @@ main.registerCommand({
     return 1;
   }
 
-  try {
-    files.createTarball(path.join(buildDir, 'bundle'), outputPath);
-  } catch (err) {
-    console.log(JSON.stringify(err));
-    process.stderr.write("Couldn't create tarball\n");
+  if (!options['directory']) {
+    try {
+      files.createTarball(path.join(buildDir, 'bundle'), outputPath);
+    } catch (err) {
+      console.log(JSON.stringify(err));
+      process.stderr.write("Couldn't create tarball\n");
+    }
   }
   files.rm_recursive(buildDir);
 });
@@ -677,6 +710,7 @@ main.registerCommand({
   }
 }, function (options) {
   var mongoUrl;
+  var usedMeteorAccount = false;
 
   if (options.args.length === 0) {
     // localhost mode
@@ -689,10 +723,16 @@ main.registerCommand({
 
     if (! mongoPort) {
       process.stdout.write(
-"mongo: Meteor isn't running.\n" +
+"mongo: Meteor isn't running a local MongoDB server.\n" +
 "\n" +
 "This command only works while Meteor is running your application\n" +
-"locally. Start your application first.\n");
+"locally. Start your application first. (This error will also occur if\n" +
+"you asked Meteor to use a different MongoDB server with $MONGO_URL when\n" +
+"you ran your application.)\n" +
+"\n" +
+"If you're trying to connect to the database of an app you deployed\n" +
+"with 'meteor deploy', specify your site's name with this command.\n"
+);
       return 1;
     }
     mongoUrl = "mongodb://127.0.0.1:" + mongoPort + "/meteor";
@@ -707,6 +747,7 @@ main.registerCommand({
       mongoUrl = deployGalaxy.temporaryMongoUrl(site);
     } else {
       mongoUrl = deploy.temporaryMongoUrl(site);
+      usedMeteorAccount = true;
     }
 
     if (! mongoUrl)
@@ -716,6 +757,8 @@ main.registerCommand({
   if (options.url) {
     console.log(mongoUrl);
   } else {
+    if (usedMeteorAccount)
+      auth.maybePrintRegistrationLink();
     process.stdin.pause();
     var runMongo = require('./run-mongo.js');
     runMongo.runMongoShell(mongoUrl);
@@ -772,7 +815,7 @@ main.registerCommand({
 
 main.registerCommand({
   name: 'deploy',
-  minArgs: 0,
+  minArgs: 1,
   maxArgs: 1,
   options: {
     'delete': { type: Boolean, short: 'D' },
@@ -861,26 +904,16 @@ main.registerCommand({
     });
   }
 
-  var registrationUrl = auth.registrationUrl();
-  if (registrationUrl &&
-      deployResult === 0 &&
-      ! auth.currentUsername()) {
-    process.stderr.write("\n");
-    if (loggedIn) {
+  if (deployResult === 0) {
+    auth.maybePrintRegistrationLink({
+      leadingNewline: true,
       // If the user was already logged in at the beginning of the
       // deploy, then they've already been prompted to set a password
-      // and this is more of a friendly reminder to set their password,
-      // so we word it slightly differently than the first time they're
-      // being shown a registration url.
-      process.stderr.write(
-"You should set a password on your Meteor developer account. It takes\n" +
-"about a minute at: " + registrationUrl + "\n\n");
-    } else {
-      process.stderr.write(
-"You can set a password on your account or change your email address at:\n" +
-registrationUrl + "\n\n");
-    }
+      // at least once before, so we use a slightly different message.
+      firstTime: ! loggedIn
+    });
   }
+
   return deployResult;
 });
 
@@ -922,8 +955,8 @@ main.registerCommand({
   minArgs: 1,
   maxArgs: 1,
   options: {
-    add: { type: String },
-    remove: { type: String },
+    add: { type: String, short: "a" },
+    remove: { type: String, short: "r" },
     list: { type: Boolean }
   }
 }, function (options) {
@@ -941,6 +974,7 @@ main.registerCommand({
   }
 
   config.printUniverseBanner();
+  auth.pollForRegistrationCompletion();
   var site = qualifySitename(options.args[0]);
 
   if (hostedWithGalaxy(site)) {
@@ -975,15 +1009,14 @@ main.registerCommand({
   maxArgs: 1
 }, function (options) {
   config.printUniverseBanner();
+  auth.pollForRegistrationCompletion();
   var site = qualifySitename(options.args[0]);
 
   if (! auth.isLoggedIn()) {
-    // XXX meteor.com/create-account or something should have a nice
-    // registration form
     process.stderr.write(
-"\nYou must be logged in to claim sites. Use 'meteor login' to log in.\n" +
-"If you don't have a Meteor developer account yet, you can quickly\n" +
-"create one at www.meteor.com.\n\n");
+"You must be logged in to claim sites. Use 'meteor login' to log in.\n" +
+"If you don't have a Meteor developer account yet, create one by clicking\n" +
+"'Sign in' and then 'Create account' at www.meteor.com.\n\n");
     return 1;
   }
 
@@ -1081,7 +1114,7 @@ main.registerCommand({
       // sure the user doesn't 'meteor update' in the app, requiring
       // a switch to a different release
       appDirForVersionCheck: options.appDir,
-      port: options.port,
+      proxyPort: options.port,
       disableOplog: options['disable-oplog'],
       settingsFile: options.settings,
       banner: "Tests",
@@ -1134,6 +1167,66 @@ main.registerCommand({
 
 
 ///////////////////////////////////////////////////////////////////////////////
+// run-command
+///////////////////////////////////////////////////////////////////////////////
+
+main.registerCommand({
+  name: 'run-command',
+  hidden: true,
+  minArgs: 1,
+  maxArgs: Infinity
+}, function (options) {
+  var library = release.current.library;
+
+  if (! fs.existsSync(options.args[0]) ||
+      ! fs.statSync(options.args[0]).isDirectory()) {
+    process.stderr.write(options.args[0] + ": not a directory\n");
+    return 1;
+  }
+
+  // Build and load the package
+  var world, packageName;
+  var messages = buildmessage.capture(
+    { title: "building the program" }, function () {
+      // Make the directory visible as a package. Derive the last
+      // package name from the last component of the directory, and
+      // bail out if that creates a conflict.
+      var packageDir = path.resolve(options.args[0]);
+      packageName = path.basename(packageDir) + "-tool";
+      if (library.get(packageName, false)) {
+        buildmessage.error("'" + packageName +
+                           "' conflicts with the name " +
+                           "of a package in the library");
+      }
+      library.override(packageName, packageDir);
+
+      world = unipackage.load({
+        library: library,
+        packages: [ packageName ],
+        release: release.current.name
+      });
+    });
+  if (messages.hasMessages()) {
+    process.stderr.write(messages.formatMessages());
+    return 1;
+  }
+
+  if (typeof world[packageName].main !== "function") {
+    process.stderr.write("Package does not define a main() function.\n");
+    return 1;
+  }
+
+  var ret = world[packageName].main(options.args.slice(1));
+  // let exceptions propagate and get printed by node
+  if (ret === undefined)
+    ret = 0;
+  if (typeof ret !== "number")
+    ret = 1;
+  ret = +ret; // cast to integer
+  return ret;
+});
+
+///////////////////////////////////////////////////////////////////////////////
 // login
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -1141,10 +1234,14 @@ main.registerCommand({
   name: 'login',
   options: {
     email: { type: String },
+    // Undocumented: get credentials on a specific Galaxy. Do we still
+    // need this?
     galaxy: { type: String }
   }
 }, function (options) {
-  return auth.loginCommand(options);
+  return auth.loginCommand(_.extend({
+    overwriteExistingToken: true
+  }, options));
 });
 
 
@@ -1191,12 +1288,13 @@ main.registerCommand({
 
 main.registerCommand({
   name: 'self-test',
+  minArgs: 0,
+  maxArgs: 1,
   options: {
     changed: { type: Boolean },
     'force-online': { type: Boolean },
     slow: { type: Boolean },
     history: { type: Number },
-    tests: { type: String }
   },
   hidden: true
 }, function (options) {
@@ -1214,13 +1312,13 @@ main.registerCommand({
   }
 
   var testRegexp = undefined;
-  if (options.tests) {
+  if (options.args.length) {
     try {
-      testRegexp = new RegExp(options.tests);
+      testRegexp = new RegExp(options.args[0]);
     } catch (e) {
       if (!(e instanceof SyntaxError))
         throw e;
-      process.stderr.write("Bad regular expression: " + options.tests + "\n");
+      process.stderr.write("Bad regular expression: " + options.args[0] + "\n");
       return 1;
     }
   }
@@ -1232,6 +1330,26 @@ main.registerCommand({
     historyLines: options.history,
     testRegexp: testRegexp
   });
+});
+
+
+///////////////////////////////////////////////////////////////////////////////
+// list-sites
+///////////////////////////////////////////////////////////////////////////////
+
+main.registerCommand({
+  name: 'list-sites',
+  minArgs: 0,
+  maxArgs: 0
+}, function (options) {
+  auth.pollForRegistrationCompletion();
+  if (! auth.isLoggedIn()) {
+    process.stderr.write(
+      "You must be logged in for that. Try 'meteor login'.\n");
+    return 1;
+  }
+
+  return deploy.listSites();
 });
 
 

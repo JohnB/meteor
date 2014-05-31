@@ -49,7 +49,7 @@ fi
 PLATFORM="${UNAME}_${ARCH}"
 
 # save off meteor checkout dir as final target
-cd `dirname $0`/..
+cd "`dirname "$0"`"/..
 TARGET_DIR=`pwd`
 
 # Read the bundle version from the meteor shell script.
@@ -71,12 +71,12 @@ umask 022
 mkdir build
 cd build
 
-git clone git://github.com/joyent/node.git
+git clone https://github.com/joyent/node.git
 cd node
 # When upgrading node versions, also update the values of MIN_NODE_VERSION at
 # the top of tools/meteor.js and tools/server/boot.js, and the text in
 # docs/client/concepts.html and the README in tools/bundler.js.
-git checkout v0.10.25
+git checkout v0.10.28
 
 ./configure --prefix="$DIR"
 make -j4
@@ -107,8 +107,11 @@ npm install kexec@0.2.0
 npm install source-map@0.1.32
 npm install source-map-support@0.2.5
 npm install bcrypt@0.7.7
-npm install http-proxy@1.0.2
+npm install node-aes-gcm@0.1.3
 npm install heapdump@0.2.5
+
+# Fork of 1.0.2 with https://github.com/nodejitsu/node-http-proxy/pull/592
+npm install https://github.com/meteor/node-http-proxy/tarball/99f757251b42aeb5d26535a7363c96804ee057f0
 
 # Using the unreleased 1.1 branch. We can probably switch to a built NPM version
 # when it gets released.
@@ -139,7 +142,7 @@ cd ../..
 # particular version of openssl on the host system.
 
 cd "$DIR/build"
-OPENSSL="openssl-1.0.1f"
+OPENSSL="openssl-1.0.1g"
 OPENSSL_URL="http://www.openssl.org/source/$OPENSSL.tar.gz"
 wget $OPENSSL_URL || curl -O $OPENSSL_URL
 tar xzf $OPENSSL.tar.gz
@@ -169,11 +172,11 @@ git checkout ssl-r$MONGO_VERSION
 # Compile
 
 MONGO_FLAGS="--ssl --release -j4 "
-MONGO_FLAGS+="--cpppath $DIR/build/openssl-out/include --libpath $DIR/build/openssl-out/lib "
+MONGO_FLAGS+="--cpppath=$DIR/build/openssl-out/include --libpath=$DIR/build/openssl-out/lib "
 
 if [ "$MONGO_OS" == "osx" ]; then
     # NOTE: '--64' option breaks the compilation, even it is on by default on x64 mac: https://jira.mongodb.org/browse/SERVER-5575
-    MONGO_FLAGS+="--openssl $DIR/build/openssl-out/lib "
+    MONGO_FLAGS+="--openssl=$DIR/build/openssl-out/lib "
     /usr/local/bin/scons $MONGO_FLAGS mongo mongod
 elif [ "$MONGO_OS" == "linux" ]; then
     MONGO_FLAGS+="--no-glibc-check --prefix=./ "

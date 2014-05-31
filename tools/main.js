@@ -88,7 +88,7 @@ main.SpringboardToLatestRelease = function () {};
 //   - can be a basic command, like "deploy"
 //   - can be a subcommand, like "admin grant"
 //     (distinguished by presence of ' ')
-//   - can be an option that functions as a command, ilke "--arch"
+//   - can be an option that functions as a command, like "--arch"
 //     (distinguished by starting with '--')
 // - minArgs: minimum non-option arguments that can be present (default 0)
 // - maxArgs: maximum non-option arguments that can be present (defaults to
@@ -330,11 +330,22 @@ Fiber(function () {
 
   // Check required Node version.
   // This code is duplicated in tools/server/boot.js.
-  var MIN_NODE_VERSION = 'v0.10.25';
+  var MIN_NODE_VERSION = 'v0.10.28';
   if (require('semver').lt(process.version, MIN_NODE_VERSION)) {
     process.stderr.write(
       'Meteor requires Node ' + MIN_NODE_VERSION + ' or later.\n');
     process.exit(1);
+  }
+
+  // This is a bit of a hack, but: if we don't check this in the tool, then the
+  // first time we do a unipackage.load, it will fail due to the check in the
+  // meteor package, and that'll look a lot uglier.
+  if (process.env.ROOT_URL) {
+    var parsedUrl = require('url').parse(process.env.ROOT_URL);
+    if (!parsedUrl.host) {
+      process.stderr.write('$ROOT_URL, if specified, must be an URL.\n');
+      process.exit(1);
+    }
   }
 
   // Parse the arguments.
@@ -573,7 +584,19 @@ Fiber(function () {
     // appRelease will be null if a super old project with no
     // .meteor/release or 'none' if created by a checkout
     appRelease = project.getMeteorReleaseVersion(appDir);
+    // This is what happens if the file exists and is empty. This really
+    // shouldn't happen unless the user did it manually.
+    if (appRelease === '') {
+      process.stderr.write(
+"Problem! This project has a .meteor/release file which is empty.\n" +
+"The file should either contain the release of Meteor that you want to use,\n" +
+"or the word 'none' if you will only use the project with unreleased\n" +
+"checkouts of Meteor. Please edit the .meteor/release file in the project\n" +
+"and change it to a valid Meteor release or 'none'.\n");
+      process.exit(1);
+    }
   }
+
   if (! files.usesWarehouse()) {
     // Running from a checkout
     if (releaseOverride) {
@@ -799,8 +822,7 @@ commandName + ": can only take one " + helpfulOptionName + " option.\n" +
       var value = values[0];
       if (value === null) {
         // This option requires a value and they didn't give it one
-        // (it was the last word on the command line, or it was
-        // a short option immediately followed by a non-number).
+        // (it was the last word on the command line).
         process.stderr.write(
 commandName + ": the " + helpfulOptionName + " option needs a value.\n" +
 "Try 'meteor help " + commandName + "' for help.\n");
@@ -909,7 +931,7 @@ commandName + ": You're not in a Meteor project directory.\n" +
   }
 
   if (command.requiresApp && release.current.isCheckout() &&
-      appRelease !== "none") {
+      appRelease && appRelease !== "none") {
     // For commands that work with apps, if we have overridden the
     // app's usual release by using a checkout, print a reminder banner.
     process.stderr.write(

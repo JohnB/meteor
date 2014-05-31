@@ -4,7 +4,7 @@ var warehouse = require('./warehouse.js');
 var httpHelpers = require('./http-helpers.js');
 var config = require('./config.js');
 var release = require('./release.js');
-var runLog = require('./run-log.js').runLog;
+var runLog = require('./run-log.js');
 
 /**
  * Downloads the current manifest file and returns it. Throws
@@ -71,9 +71,9 @@ var check = function (showBanner) {
     if (manifest.releases.stable.banner &&
         warehouse.lastPrintedBannerRelease() !== manifestLatestRelease) {
       if (showBanner) {
-        runLog.log();
+        runLog.log("");
         runLog.log(manifest.releases.stable.banner);
-        runLog.log();
+        runLog.log("");
       }
       warehouse.writeLastPrintedBannerRelease(manifestLatestRelease);
     } else {

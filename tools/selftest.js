@@ -289,7 +289,7 @@ var Sandbox = function (options) {
   fs.mkdirSync(self.home, 0755);
   self.cwd = self.home;
   self.env = {};
-  self.fakeMongo = options.fakeMongo
+  self.fakeMongo = options.fakeMongo;
 
   if (_.has(options, 'warehouse')) {
     // Make a directory to hold our new warehouse
@@ -464,19 +464,37 @@ _.extend(Sandbox.prototype, {
     fs.writeFileSync(path.join(self.cwd, filename), contents, 'utf8');
   },
 
-  // Reads a file in the sandbox as a utf8 string. 'filename' is a path
-  // intepreted relative to the Sandbox's cwd.  throws if the file does not
-  // exist.
-  // XXX maybe it should return null if the file does not exist?
+  // Reads a file in the sandbox as a utf8 string. 'filename' is a
+  // path intepreted relative to the Sandbox's cwd.  Returns null if
+  // file does not exist.
   read: function (filename) {
     var self = this;
-    return fs.readFileSync(path.join(self.cwd, filename), 'utf8');
+    var file = path.join(self.cwd, filename);
+    if (!fs.existsSync(file))
+      return null;
+    else
+      return fs.readFileSync(path.join(self.cwd, filename), 'utf8');
   },
 
   // Delete a file in the sandbox. 'filename' is as in write().
   unlink: function (filename) {
     var self = this;
     fs.unlinkSync(path.join(self.cwd, filename));
+  },
+
+  // Return the current contents of .meteorsession in the sandbox.
+  readSessionFile: function () {
+    var self = this;
+    return fs.readFileSync(path.join(self.root, '.meteorsession'), 'utf8');
+  },
+
+  // Overwrite .meteorsession in the sandbox with 'contents'. You
+  // could use this in conjunction with readSessionFile to save and
+  // restore authentication states.
+  writeSessionFile: function (contents) {
+    var self = this;
+    return fs.writeFileSync(path.join(self.root, '.meteorsession'),
+                            contents, 'utf8');
   }
 });
 
@@ -839,7 +857,7 @@ _.extend(Run.prototype, {
       var net = require('net');
 
       var lastStartTime = 0;
-      for (var attempts = 0; ! self.fakeMongoConnection && attempts < 20;
+      for (var attempts = 0; ! self.fakeMongoConnection && attempts < 50;
            attempts ++) {
         // Throttle attempts to one every 100ms
         utils.sleepMs((lastStartTime + 100) - (+ new Date));
@@ -876,6 +894,12 @@ _.extend(Run.prototype, {
     }
 
     self.fakeMongoConnection.write(JSON.stringify(command) + "\n");
+    // If we told it to exit, then we should close our end and connect again if
+    // asked to send more.
+    if (command.exit) {
+      self.fakeMongoConnection.end();
+      self.fakeMongoConnection = null;
+    }
   })
 });
 
@@ -976,7 +1000,7 @@ var tagDescriptions = {
   // these last two are not actually test tags; they reflect the use of
   // --changed and --tests
   unchanged: 'unchanged since last pass',
-  misnamed: "don't match --tests argument"
+  'non-matching': "don't match specified pattern"
 };
 
 // options: onlyChanged, offline, includeSlowTests, historyLines, testRegexp
@@ -1015,7 +1039,7 @@ var runTests = function (options) {
     tests = _.filter(tests, function (test) {
       return options.testRegexp.test(test.name);
     });
-    skipCounts.misnamed = lengthBeforeTestRegexp - tests.length;
+    skipCounts['non-matching'] = lengthBeforeTestRegexp - tests.length;
   }
 
   if (options.onlyChanged) {

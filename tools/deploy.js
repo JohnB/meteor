@@ -33,7 +33,7 @@ var Future = require('fibers/future');
 //
 // Options include:
 // - method: GET, POST, or DELETE. default GET
-// - operation: "info", "logs", "mongo", "deploy"
+// - operation: "info", "logs", "mongo", "deploy", "authorized-apps"
 // - site: site name
 // - expectPayload: an array of key names. if present, then we expect
 //   the server to return JSON content on success and to return an
@@ -67,7 +67,8 @@ var deployRpc = function (options) {
 
   try {
     var result = httpHelpers.request(_.extend(options, {
-      url: config.getDeployUrl() + '/' + options.operation + '/' + options.site,
+      url: config.getDeployUrl() + '/' + options.operation +
+        (options.site ? ('/' + options.site) : ''),
       method: options.method || 'GET',
       bodyStream: options.bodyStream,
       useAuthHeader: true,
@@ -147,10 +148,13 @@ var authedRpc = function (options) {
     expectPayload: []
   });
 
-  if (infoResult.statusCode === 403 && rpcOptions.promptIfAuthFails) {
+  if (infoResult.statusCode === 401 && rpcOptions.promptIfAuthFails) {
     // Our authentication didn't validate, so prompt the user to log in
     // again, and resend the RPC if the login succeeds.
-    var username = utils.readLine({ prompt: "Username: " });
+    var username = utils.readLine({
+      prompt: "Username: ",
+      stream: process.stderr
+    });
     var loginOptions = {
       username: username,
       suppressErrorMessage: true
@@ -262,9 +266,9 @@ var printLegacyPasswordMessage = function (site) {
 // authorized for, instruct them to get added via 'meteor authorized
 // --add' or switch accounts.
 var printUnauthorizedMessage = function () {
-  var username = auth.currentUsername();
+  var username = auth.loggedInUsername();
   process.stderr.write(
-"\nSorry, that site belongs to a different user.\n" +
+"Sorry, that site belongs to a different user.\n" +
 (username ? "You are currently logged in as " + username  + ".\n" : "") +
 "\nEither have the site owner use 'meteor authorized --add' to add you\n" +
 "as an authorized developer for the site, or switch to an authorized\n" +
@@ -313,12 +317,27 @@ var bundleAndDeploy = function (options) {
   if (! site)
     return 1;
 
+  // We should give a username/password prompt if the user was logged in
+  // but the credentials are expired, unless the user is logged in but
+  // doesn't have a username (in which case they should hit the email
+  // prompt -- a user without a username shouldn't be given a username
+  // prompt). There's an edge case where things happen in the following
+  // order: user creates account, user sets username, credential expires
+  // or is revoked, user comes back to deploy again. In that case,
+  // they'll get an email prompt instead of a username prompt because
+  // the command-line tool didn't have time to learn about their
+  // username before the credential was expired.
+  auth.pollForRegistrationCompletion({
+    noLogout: true
+  });
+  var promptIfAuthFails = (auth.loggedInUsername() !== null);
+
   // Check auth up front, rather than after the (potentially lengthy)
   // bundling process.
   var preflight = authedRpc({
     site: site,
     preflight: true,
-    promptIfAuthFails: true
+    promptIfAuthFails: promptIfAuthFails
   });
 
   if (preflight.errorMessage) {
@@ -341,7 +360,7 @@ var bundleAndDeploy = function (options) {
   var buildDir = path.join(options.appDir, '.meteor', 'local', 'build_tar');
   var bundlePath = path.join(buildDir, 'bundle');
 
-  process.stdout.write('Deploying to ' + site + '.  Bundling...\n');
+  process.stdout.write('Deploying to ' + site + '. Bundling...\n');
 
   var settings = null;
   var messages = buildmessage.capture({
@@ -487,6 +506,7 @@ var checkAuthThenSendRpc = function (site, operation, what) {
         return null;
       }
     } else { // User is logged in but not authorized for this app
+      process.stderr.write("\n");
       printUnauthorizedMessage();
       return null;
     }
@@ -539,6 +559,7 @@ var logs = function (site) {
     return 1;
   } else {
     process.stdout.write(result.message);
+    auth.maybePrintRegistrationLink({ leadingNewline: true });
     return 0;
   }
 };
@@ -659,11 +680,12 @@ var claim = function (site) {
   });
 
   if (result.errorMessage) {
-    if (! auth.currentUsername() &&
+    auth.pollForRegistrationCompletion();
+    if (! auth.loggedInUsername() &&
         auth.registrationUrl()) {
       process.stderr.write(
-"\nBefore you can claim existing sites, you need to set a password on\n" +
-"your Meteor developer account. You can do that here in under a minute:\n\n" +
+"You need to set a password on your Meteor developer account before\n" +
+"you can claim sites. You can do that here in under a minute:\n\n" +
 auth.registrationUrl() + "\n\n");
     } else {
       process.stderr.write("Couldn't claim site: " +
@@ -687,6 +709,32 @@ site + ": " + "successfully transferred to your account.\n" +
   return 0;
 };
 
+var listSites = function () {
+  var result = deployRpc({
+    method: "GET",
+    operation: "authorized-apps",
+    promptIfAuthFails: true,
+    expectPayload: ["sites"]
+  });
+
+  if (result.errorMessage) {
+    process.stderr.write("Couldn't list sites: " +
+                         result.errorMessage + "\n");
+    return 1;
+  }
+
+  if (! result.payload ||
+      ! result.payload.sites ||
+      ! result.payload.sites.length) {
+    process.stdout.write("You don't have any sites yet.\n");
+  } else {
+    _.each(result.payload.sites, function (site) {
+      process.stdout.write(site + "\n");
+    });
+  }
+  return 0;
+};
+
 
 exports.bundleAndDeploy = bundleAndDeploy;
 exports.deleteApp = deleteApp;
@@ -695,3 +743,4 @@ exports.logs = logs;
 exports.listAuthorized = listAuthorized;
 exports.changeAuthorized = changeAuthorized;
 exports.claim = claim;
+exports.listSites = listSites;

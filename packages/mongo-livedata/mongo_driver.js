@@ -15,6 +15,8 @@ var Future = Npm.require(path.join('fibers', 'future'));
 MongoInternals = {};
 MongoTest = {};
 
+// This is used to add or remove EJSON from the beginning of everything nested
+// inside an EJSON custom type. It should only be called on pure JSON!
 var replaceNames = function (filter, thing) {
   if (typeof thing === "object") {
     if (_.isArray(thing)) {
@@ -48,7 +50,8 @@ var replaceMongoAtomWithMeteor = function (document) {
   if (document instanceof MongoDB.ObjectID) {
     return new Meteor.Collection.ObjectID(document.toHexString());
   }
-  if (document["EJSON$type"] && document["EJSON$value"]) {
+  if (document["EJSON$type"] && document["EJSON$value"]
+      && _.size(document) === 2) {
     return EJSON.fromJSONValue(replaceNames(unmakeMongoLegal, document));
   }
   if (document instanceof MongoDB.Timestamp) {
@@ -113,6 +116,7 @@ MongoConnection = function (url, options) {
   options = options || {};
   self._connectCallbacks = [];
   self._observeMultiplexers = {};
+  self._onFailoverHook = new Hook;
 
   var mongoOptions = {db: {safe: true}, server: {}, replSet: {}};
 
@@ -144,18 +148,42 @@ MongoConnection = function (url, options) {
     mongoOptions.replSet.poolSize = options.poolSize;
   }
 
-  MongoDB.connect(url, mongoOptions, function(err, db) {
+  MongoDB.connect(url, mongoOptions, Meteor.bindEnvironment(function(err, db) {
     if (err)
       throw err;
     self.db = db;
+    // We keep track of the ReplSet's primary, so that we can trigger hooks when
+    // it changes.  The Node driver's joined callback seems to fire way too
+    // often, which is why we need to track it ourselves.
+    self._primary = null;
+    // First, figure out what the current primary is, if any.
+    if (self.db.serverConfig._state.master)
+      self._primary = self.db.serverConfig._state.master.name;
+    self.db.serverConfig.on(
+      'joined', Meteor.bindEnvironment(function (kind, doc) {
+        if (kind === 'primary') {
+          if (doc.primary !== self._primary) {
+            self._primary = doc.primary;
+            self._onFailoverHook.each(function (callback) {
+              callback();
+              return true;
+            });
+          }
+        } else if (doc.me === self._primary) {
+          // The thing we thought was primary is now something other than
+          // primary.  Forget that we thought it was primary.  (This means that
+          // if a server stops being primary and then starts being primary again
+          // without another server becoming primary in the middle, we'll
+          // correctly count it as a failover.)
+          self._primary = null;
+        }
+    }));
 
-    Fiber(function () {
-      // drain queue of pending callbacks
-      _.each(self._connectCallbacks, function (c) {
-        c(db);
-      });
-    }).run();
-  });
+    // drain queue of pending callbacks
+    _.each(self._connectCallbacks, function (c) {
+      c(db);
+    });
+  }));
 
   self._docFetcher = new DocFetcher(self);
   self._oplogHandle = null;
@@ -229,6 +257,12 @@ MongoConnection.prototype._maybeBeginWrite = function () {
     return {committed: function () {}};
 };
 
+// Internal interface: adds a callback which is called when the Mongo primary
+// changes. Returns a stop handle.
+MongoConnection.prototype._onFailover = function (callback) {
+  return this._onFailoverHook.register(callback);
+};
+
 
 //////////// Public API //////////
 
@@ -269,13 +303,25 @@ var bindEnvironmentForWrite = function (callback) {
 MongoConnection.prototype._insert = function (collection_name, document,
                                               callback) {
   var self = this;
+
+  var sendError = function (e) {
+    if (callback)
+      return callback(e);
+    throw e;
+  };
+
   if (collection_name === "___meteor_failure_test_collection") {
     var e = new Error("Failure test");
     e.expected = true;
-    if (callback)
-      return callback(e);
-    else
-      throw e;
+    sendError(e);
+    return;
+  }
+
+  if (!(LocalCollection._isPlainObject(document) &&
+        !EJSON._isCustomType(document))) {
+    sendError(new Error(
+      "Only documents (plain objects) may be inserted into MongoDB"));
+    return;
   }
 
   var write = self._maybeBeginWrite();
@@ -754,11 +800,15 @@ MongoConnection.prototype._createSynchronousCursor = function(
     // ... and to keep querying the server indefinitely rather than just 5 times
     // if there's no more data.
     mongoOptions.numberOfRetries = -1;
-    // And if this cursor specifies a 'ts', then set the undocumented oplog
-    // replay flag, which does a special scan to find the first document
-    // (instead of creating an index on ts).
-    if (cursorDescription.selector.ts)
+    // And if this is on the oplog collection and the cursor specifies a 'ts',
+    // then set the undocumented oplog replay flag, which does a special scan to
+    // find the first document (instead of creating an index on ts). This is a
+    // very hard-coded Mongo flag which only works on the oplog collection and
+    // only works with the ts field.
+    if (cursorDescription.collectionName === OPLOG_COLLECTION &&
+        cursorDescription.selector.ts) {
       mongoOptions.oplogReplay = true;
+    }
   }
 
   var dbCursor = collection.find(
@@ -991,28 +1041,52 @@ MongoConnection.prototype._observeChanges = function (
   var observeHandle = new ObserveHandle(multiplexer, callbacks);
 
   if (firstHandle) {
-    var driverClass = PollingObserveDriver;
-    var matcher;
-    if (self._oplogHandle && !ordered && !callbacks._testOnlyPollCallback) {
-      try {
-        matcher = new Minimongo.Matcher(cursorDescription.selector);
-      } catch (e) {
-        // Ignore and avoid oplog driver. eg, maybe we're trying to compile some
-        // newfangled $selector that minimongo doesn't support yet.
-        // XXX make all compilation errors MinimongoError or something
-        //     so that this doesn't ignore unrelated exceptions
-      }
-      if (matcher
-          && OplogObserveDriver.cursorSupported(cursorDescription, matcher)) {
-        driverClass = OplogObserveDriver;
-      }
-    }
+    var matcher, sorter;
+    var canUseOplog = _.all([
+      function () {
+        // At a bare minimum, using the oplog requires us to have an oplog, to
+        // want unordered callbacks, and to not want a callback on the polls
+        // that won't happen.
+        return self._oplogHandle && !ordered &&
+          !callbacks._testOnlyPollCallback;
+      }, function () {
+        // We need to be able to compile the selector. Fall back to polling for
+        // some newfangled $selector that minimongo doesn't support yet.
+        try {
+          matcher = new Minimongo.Matcher(cursorDescription.selector);
+          return true;
+        } catch (e) {
+          // XXX make all compilation errors MinimongoError or something
+          //     so that this doesn't ignore unrelated exceptions
+          return false;
+        }
+      }, function () {
+        // ... and the selector itself needs to support oplog.
+        return OplogObserveDriver.cursorSupported(cursorDescription, matcher);
+      }, function () {
+        // And we need to be able to compile the sort, if any.  eg, can't be
+        // {$natural: 1}.
+        if (!cursorDescription.options.sort)
+          return true;
+        try {
+          sorter = new Minimongo.Sorter(cursorDescription.options.sort,
+                                        { matcher: matcher });
+          return true;
+        } catch (e) {
+          // XXX make all compilation errors MinimongoError or something
+          //     so that this doesn't ignore unrelated exceptions
+          return false;
+        }
+      }], function (f) { return f(); });  // invoke each function
+
+    var driverClass = canUseOplog ? OplogObserveDriver : PollingObserveDriver;
     observeDriver = new driverClass({
       cursorDescription: cursorDescription,
       mongoHandle: self,
       multiplexer: multiplexer,
       ordered: ordered,
       matcher: matcher,  // ignored by polling
+      sorter: sorter,  // ignored by polling
       _testOnlyPollCallback: callbacks._testOnlyPollCallback
     });
 

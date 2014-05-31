@@ -13,7 +13,7 @@ var files = require(path.join(__dirname, 'files.js'));
 var httpHelpers = require('./http-helpers.js');
 var buildmessage = require('./buildmessage.js');
 var utils = require('./utils.js');
-var runLog = require('./run-log.js').runLog;
+var runLog = require('./run-log.js');
 var _ = require('underscore');
 
 var meteorNpm = exports;
@@ -153,7 +153,7 @@ meteorNpm.dependenciesArePortable = function (packageNpmDir) {
       if (itemName.match(/\.node$/))
         return true;
       var item = path.join(dir, itemName);
-      if (fs.statSync(item).isDirectory())
+      if (fs.lstatSync(item).isDirectory())
         return search(item);
     }) || false;
   };
@@ -195,7 +195,8 @@ var updateExistingNpmDirectory = function (packageName, newPackageNpmDir,
   // We need to rebuild all node modules when the Node version
   // changes, in case there are some binary ones. Technically this is
   // racey, but it shouldn't fail very often.
-  if (fs.existsSync(path.join(packageNpmDir, 'node_modules'))) {
+  var nodeModulesDir = path.join(packageNpmDir, 'node_modules');
+  if (fs.existsSync(nodeModulesDir)) {
     var oldNodeVersion;
     try {
       oldNodeVersion = fs.readFileSync(
@@ -209,8 +210,16 @@ var updateExistingNpmDirectory = function (packageName, newPackageNpmDir,
     }
 
     if (oldNodeVersion !== process.version)
-      files.rm_recursive(path.join(packageNpmDir, 'node_modules'));
+      files.rm_recursive(nodeModulesDir);
   }
+
+  // Make sure node_modules is present (fix for #1761). Prevents npm install
+  // from installing to an existing node_modules dir higher up in the
+  // filesystem.  node_modules may be absent due to a change in Node version or
+  // when `meteor add`ing a cloned package for the first time (node_modules is
+  // excluded by .gitignore)
+  if (! fs.existsSync(nodeModulesDir))
+    fs.mkdirSync(nodeModulesDir);
 
   var installedDependencies = getInstalledDependencies(packageNpmDir);
 
@@ -450,22 +459,25 @@ var installNpmModule = function (name, version, dir) {
   // how to silence all output (specifically the installed tree which
   // is printed out with `console.log`)
   //
-  // We use --force, because the NPM cache is broken! See
-  // https://github.com/isaacs/npm/issues/3265 Basically, switching
+  // We used to use --force here, because the NPM cache is broken! See
+  // https://github.com/npm/npm/issues/3265 Basically, switching
   // back and forth between a tarball fork of version X and the real
-  // version X can confuse NPM. But the main reason to use tarball
+  // version X could confuse NPM. But the main reason to use tarball
   // URLs is to get a fork of the latest version with some fix, so
-  // it's easy to trigger this! So instead, always use --force. (Even
-  // with --force, we still WRITE to the cache, so we can corrupt the
-  // cache for other invocations of npm... ah well.)
+  // it was easy to trigger this!
+  //
+  // We now use a forked version of npm with our PR
+  // https://github.com/npm/npm/pull/5137 to work around this.
   var result =
     meteorNpm._execFileSync(path.join(files.getDevBundle(), "bin", "npm"),
-                            ["install", "--force", installArg],
+                            ["install", installArg],
                             {cwd: dir});
 
   if (! result.success) {
-    var pkgNotFound = "404 '" + name + "' is not in the npm registry";
-    var versionNotFound = "version not found: " + version;
+    var pkgNotFound = "404 '" + utils.quotemeta(name) +
+          "' is not in the npm registry";
+    var versionNotFound = "version not found: " + utils.quotemeta(name) +
+          '@' + utils.quotemeta(version);
     if (result.stderr.match(new RegExp(pkgNotFound))) {
       buildmessage.error("there is no npm package named '" + name + "'");
     } else if (result.stderr.match(new RegExp(versionNotFound))) {
@@ -489,11 +501,10 @@ var installFromShrinkwrap = function (dir) {
 
   ensureConnected();
 
-  // `npm install`, which reads npm-shrinkwrap.json.  See above for why
-  // --force.
+  // `npm install`, which reads npm-shrinkwrap.json.
   var result =
     meteorNpm._execFileSync(path.join(files.getDevBundle(), "bin", "npm"),
-                            ["install", "--force"], {cwd: dir});
+                            ["install"], {cwd: dir});
 
   if (! result.success) {
     // XXX include this in the buildmessage.error instead

@@ -4,7 +4,7 @@ set -e
 set -u
 
 # cd to top level dir
-cd `dirname $0`
+cd "`dirname "$0"`"
 cd ../..
 TOPDIR=$(pwd)
 
@@ -46,7 +46,7 @@ cat > "$OUTDIR/release.json-$PLATFORM" <<ENDOFMANIFEST
   "packages": {
 $MANIFEST_PACKAGE_CHUNK
   },
-  "upgraders": ["app-packages"]
+  "upgraders": ["app-packages", "no-preserve-inputs"]
 }
 ENDOFMANIFEST
 

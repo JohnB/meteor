@@ -3,7 +3,11 @@ Package.describe({
   internal: true
 });
 
-Npm.depends({sockjs: "0.3.8", websocket: "1.0.8"});
+// We use 'faye-websocket' for connections in server-to-server DDP, mostly
+// because it's the same library used as a server in sockjs, and it's easiest to
+// deal with a single websocket implementation.  (Plus, its maintainer is easy
+// to work with on pull requests.)
+Npm.depends({sockjs: "0.3.8", "faye-websocket": "0.7.2"});
 
 Package.on_use(function (api) {
   api.use(['check', 'random', 'ejson', 'json', 'underscore', 'deps',
@@ -26,6 +30,8 @@ Package.on_use(function (api) {
   // If the facts package is loaded, publish some statistics.
   api.use('facts', 'server', {weak: true});
 
+  api.use('callback-hook', 'server');
+
   api.export('DDP');
   api.export('DDPServer', 'server');
 
@@ -43,6 +49,7 @@ Package.on_use(function (api) {
   // _idParse, _idStringify.
   api.use('minimongo', ['client', 'server']);
 
+  api.add_files('heartbeat.js', ['client', 'server']);
 
   api.add_files('livedata_server.js', 'server');
 
@@ -50,6 +57,7 @@ Package.on_use(function (api) {
   api.add_files('crossbar.js', 'server');
 
   api.add_files('livedata_common.js', ['client', 'server']);
+  api.add_files('random_stream.js', ['client', 'server']);
 
   api.add_files('livedata_connection.js', ['client', 'server']);
 
@@ -71,6 +79,7 @@ Package.on_test(function (api) {
   api.add_files('livedata_test_service.js', ['client', 'server']);
   api.add_files('session_view_tests.js', ['server']);
   api.add_files('crossbar_tests.js', ['server']);
+  api.add_files('random_stream_tests.js', ['client', 'server']);
 
   api.use('http', 'client');
   api.add_files(['stream_tests.js'], 'client');

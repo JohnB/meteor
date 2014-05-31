@@ -110,12 +110,19 @@ var builtinConverters = [
       return EJSON._isCustomType(obj);
     },
     toJSONValue: function (obj) {
-      return {$type: obj.typeName(), $value: obj.toJSONValue()};
+      var jsonValue = Meteor._noYieldsAllowed(function () {
+        return obj.toJSONValue();
+      });
+      return {$type: obj.typeName(), $value: jsonValue};
     },
     fromJSONValue: function (obj) {
       var typeName = obj.$type;
+      if (!_.has(customTypes, typeName))
+        throw new Error("Custom EJSON type " + typeName + " is not defined");
       var converter = customTypes[typeName];
-      return converter(obj.$value);
+      return Meteor._noYieldsAllowed(function () {
+        return converter(obj.$value);
+      });
     }
   }
 ];
@@ -356,6 +363,10 @@ EJSON.clone = function (v) {
     return null; // null has typeof "object"
   if (v instanceof Date)
     return new Date(v.getTime());
+  // RegExps are not really EJSON elements (eg we don't define a serialization
+  // for them), but they're immutable anyway, so we can support them in clone.
+  if (v instanceof RegExp)
+    return v;
   if (EJSON.isBinary(v)) {
     ret = EJSON.newBinary(v.length);
     for (var i = 0; i < v.length; i++) {

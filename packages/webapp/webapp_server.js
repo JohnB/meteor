@@ -25,10 +25,10 @@ var bundledJsCssPrefix;
 // CSS.  This prevents you from displaying the page in that case, and instead
 // reloads it, presumably all on the new version now.
 var RELOAD_SAFETYBELT = "\n" +
-      "if (typeof Package === 'undefined' || \n" +
-      "    ! Package.webapp || \n" +
-      "    ! Package.webapp.WebApp || \n" +
-      "    ! Package.webapp.WebApp._isCssLoaded()) \n" +
+      "if (typeof Package === 'undefined' ||\n" +
+      "    ! Package.webapp ||\n" +
+      "    ! Package.webapp.WebApp ||\n" +
+      "    ! Package.webapp.WebApp._isCssLoaded())\n" +
       "  document.location.reload(); \n";
 
 // Keepalives so that when the outer server dies unceremoniously and
@@ -131,14 +131,17 @@ WebApp.categorizeRequest = function (req) {
 // be added to the '<html>' tag. Each function is passed a 'request' object (see
 // #BrowserIdentification) and should return a string,
 var htmlAttributeHooks = [];
-var htmlAttributes = function (template, request) {
-  var attributes = '';
+var getHtmlAttributes = function (request) {
+  var combinedAttributes  = {};
   _.each(htmlAttributeHooks || [], function (hook) {
-    var attribute = hook(request);
-    if (attribute !== null && attribute !== undefined && attribute !== '')
-      attributes += ' ' + attribute;
+    var attributes = hook(request);
+    if (attributes === null)
+      return;
+    if (typeof attributes !== 'object')
+      throw Error("HTML attribute hook must return null or object");
+    _.extend(combinedAttributes, attributes);
   });
-  return template.replace('##HTML_ATTRIBUTES##', attributes);
+  return combinedAttributes;
 };
 WebApp.addHtmlAttributeHook = function (hook) {
   htmlAttributeHooks.push(hook);
@@ -247,19 +250,13 @@ var runWebAppServer = function () {
   // webserver
   var app = connect();
 
-  // Parse the query string into res.query. Used by oauth_server, but it's
-  // generally pretty handy..
-  app.use(connect.query());
-
   // Auto-compress any json, javascript, or text.
   app.use(connect.compress());
 
-  // Packages and apps can add handlers to this via
-  // WebApp.connectHandlers.  They are inserted before our default
-  // handler. If a path prefix is in use, they see the actual
-  // requested URL before the path prefix has been stripped off.
-  var packageAndAppHandlers = connect();
-  app.use(packageAndAppHandlers);
+  // Packages and apps can add handlers that run before any other Meteor
+  // handlers via WebApp.rawConnectHandlers.
+  var rawConnectHandlers = connect();
+  app.use(rawConnectHandlers);
 
   // Strip off the path prefix, if it exists.
   app.use(function (request, response, next) {
@@ -284,6 +281,10 @@ var runWebAppServer = function () {
     }
   });
 
+  // Parse the query string into res.query. Used by oauth_server, but it's
+  // generally pretty handy..
+  app.use(connect.query());
+
   var getItemPathname = function (itemUrl) {
     return decodeURIComponent(url.parse(itemUrl).pathname);
   };
@@ -295,7 +296,8 @@ var runWebAppServer = function () {
         path: item.path,
         cacheable: item.cacheable,
         // Link from source to its map
-        sourceMapUrl: item.sourceMapUrl
+        sourceMapUrl: item.sourceMapUrl,
+        type: item.type
       };
 
       if (item.sourceMap) {
@@ -308,6 +310,9 @@ var runWebAppServer = function () {
       }
     }
   });
+
+  // Exported for tests.
+  WebAppInternals.staticFiles = staticFiles;
 
 
   // Serve static files from the manifest.
@@ -327,7 +332,9 @@ var runWebAppServer = function () {
     }
 
     var serveStaticJs = function (s) {
-      res.writeHead(200, { 'Content-type': 'application/javascript' });
+      res.writeHead(200, {
+        'Content-type': 'application/javascript; charset=UTF-8'
+      });
       res.write(s);
       res.end();
     };
@@ -399,6 +406,13 @@ var runWebAppServer = function () {
     // in `about:config` (it is on by default in FF 24).
     if (info.sourceMapUrl)
       res.setHeader('X-SourceMap', info.sourceMapUrl);
+
+    if (info.type === "js") {
+      res.setHeader("Content-Type", "application/javascript; charset=UTF-8");
+    } else if (info.type === "css") {
+      res.setHeader("Content-Type", "text/css; charset=UTF-8");
+    }
+
     send(req, path.join(clientDir, info.path))
       .maxage(maxAge)
       .hidden(true)  // if we specified a dotfile in the manifest, serve it
@@ -415,6 +429,11 @@ var runWebAppServer = function () {
       .pipe(res);
   });
 
+  // Packages and apps can add handlers to this via WebApp.connectHandlers.
+  // They are inserted before our default handler.
+  var packageAndAppHandlers = connect();
+  app.use(packageAndAppHandlers);
+
   var suppressConnectErrors = false;
   // connect knows it is an error handler because it has 4 arguments instead of
   // 3. go figure.  (It is not smart enough to find such a thing if it's hidden
@@ -429,13 +448,17 @@ var runWebAppServer = function () {
   });
 
   // Will be updated by main before we listen.
-  var boilerplateHtml = null;
+  var boilerplateTemplate = null;
+  var boilerplateBaseData = null;
+  var boilerplateByAttributes = {};
   app.use(function (req, res, next) {
     if (! appUrl(req.url))
       return next();
 
-    if (!boilerplateHtml)
-      throw new Error("boilerplateHtml should be set before listening!");
+    if (!boilerplateTemplate)
+      throw new Error("boilerplateTemplate should be set before listening!");
+    if (!boilerplateBaseData)
+      throw new Error("boilerplateBaseData should be set before listening!");
 
 
     var headers = {
@@ -456,9 +479,32 @@ var runWebAppServer = function () {
       res.end();
       return undefined;
     }
+
+    var htmlAttributes = getHtmlAttributes(request);
+
+    // The only thing that changes from request to request (for now) are the
+    // HTML attributes (used by, eg, appcache), so we can memoize based on that.
+    var attributeKey = JSON.stringify(htmlAttributes);
+    if (!_.has(boilerplateByAttributes, attributeKey)) {
+      try {
+        var boilerplateData = _.extend({htmlAttributes: htmlAttributes},
+                                       boilerplateBaseData);
+        var boilerplateInstance = boilerplateTemplate.extend({
+          data: boilerplateData
+        });
+        var boilerplateHtmlJs = boilerplateInstance.render();
+        boilerplateByAttributes[attributeKey] = "<!DOCTYPE html>\n" +
+              HTML.toHTML(boilerplateHtmlJs, boilerplateInstance);
+      } catch (e) {
+        Log.error("Error running template: " + e);
+        res.writeHead(500, headers);
+        res.end();
+        return undefined;
+      }
+    }
+
     res.writeHead(200, headers);
-    var requestSpecificHtml = htmlAttributes(boilerplateHtml, request);
-    res.write(requestSpecificHtml);
+    res.write(boilerplateByAttributes[attributeKey]);
     res.end();
     return undefined;
   });
@@ -520,6 +566,7 @@ var runWebAppServer = function () {
   // start up app
   _.extend(WebApp, {
     connectHandlers: packageAndAppHandlers,
+    rawConnectHandlers: rawConnectHandlers,
     httpServer: httpServer,
     // metadata about the client program that we serve
     clientProgram: {
@@ -555,37 +602,48 @@ var runWebAppServer = function () {
     // '--keepalive' is a use of the option.
     var expectKeepalives = _.contains(argv, '--keepalive');
 
-    var boilerplateHtmlPath = path.join(clientDir, clientJson.page);
-    boilerplateHtml = fs.readFileSync(boilerplateHtmlPath, 'utf8');
+    boilerplateBaseData = {
+      css: [],
+      js: [],
+      head: '',
+      body: '',
+      inlineScriptsAllowed: WebAppInternals.inlineScriptsAllowed(),
+      meteorRuntimeConfig: JSON.stringify(__meteor_runtime_config__),
+      reloadSafetyBelt: RELOAD_SAFETYBELT,
+      rootUrlPathPrefix: __meteor_runtime_config__.ROOT_URL_PATH_PREFIX || '',
+      bundledJsCssPrefix: bundledJsCssPrefix ||
+        __meteor_runtime_config__.ROOT_URL_PATH_PREFIX || ''
+    };
 
-    // Include __meteor_runtime_config__ in the app html, as an inline script if
-    // it's not forbidden by CSP.
-    if (WebAppInternals.inlineScriptsAllowed()) {
-      boilerplateHtml = boilerplateHtml.replace(
-          /##RUNTIME_CONFIG##/,
-        "<script type='text/javascript'>__meteor_runtime_config__ = " +
-          JSON.stringify(__meteor_runtime_config__) + ";</script>");
-      boilerplateHtml = boilerplateHtml.replace(
-          /##RELOAD_SAFETYBELT##/,
-        "<script type='text/javascript'>"+RELOAD_SAFETYBELT+"</script>");
-    } else {
-      boilerplateHtml = boilerplateHtml.replace(
-        /##RUNTIME_CONFIG##/,
-        "<script type='text/javascript' src='##ROOT_URL_PATH_PREFIX##/meteor_runtime_config.js'></script>"
-      );
-      boilerplateHtml = boilerplateHtml.replace(
-          /##RELOAD_SAFETYBELT##/,
-        "<script type='text/javascript' src='##ROOT_URL_PATH_PREFIX##/meteor_reload_safetybelt.js'></script>");
+    _.each(WebApp.clientProgram.manifest, function (item) {
+      if (item.type === 'css' && item.where === 'client') {
+        boilerplateBaseData.css.push({url: item.url});
+      }
+      if (item.type === 'js' && item.where === 'client') {
+        boilerplateBaseData.js.push({url: item.url});
+      }
+      if (item.type === 'head') {
+        boilerplateBaseData.head = fs.readFileSync(
+          path.join(clientDir, item.path), 'utf8');
+      }
+      if (item.type === 'body') {
+        boilerplateBaseData.body = fs.readFileSync(
+          path.join(clientDir, item.path), 'utf8');
+      }
+    });
 
-    }
-    boilerplateHtml = boilerplateHtml.replace(
-        /##ROOT_URL_PATH_PREFIX##/g,
-      __meteor_runtime_config__.ROOT_URL_PATH_PREFIX || "");
+    var boilerplateTemplateSource = Assets.getText("boilerplate.html");
+    var boilerplateRenderCode = Spacebars.compile(
+      boilerplateTemplateSource, { isBody: true });
 
-    boilerplateHtml = boilerplateHtml.replace(
-        /##BUNDLED_JS_CSS_PREFIX##/g,
-      bundledJsCssPrefix ||
-        __meteor_runtime_config__.ROOT_URL_PATH_PREFIX || "");
+    // Note that we are actually depending on eval's local environment capture
+    // so that UI and HTML are visible to the eval'd code.
+    var boilerplateRender = eval(boilerplateRenderCode);
+
+    boilerplateTemplate = UI.Component.extend({
+      kind: "MainPage",
+      render: boilerplateRender
+    });
 
     // only start listening after all the startup code has run.
     var localPort = parseInt(process.env.PORT) || 0;

@@ -15,6 +15,7 @@ Plugin.registerSourceHandler("less", function (compileStep) {
 
   var source = compileStep.read().toString('utf8');
   var options = {
+    filename: compileStep.inputPath,
     // Use fs.readFileSync to process @imports. This is the bundler, so
     // that's not going to cause concurrency issues, and it means that (a)
     // we don't have to use Futures and (b) errors thrown by bugs in less
@@ -25,10 +26,17 @@ Plugin.registerSourceHandler("less", function (compileStep) {
 
   var parser = new less.Parser(options);
   var astFuture = new Future;
-  var ast;
+  var sourceMap = null;
   try {
     parser.parse(source, astFuture.resolver());
-    ast = astFuture.wait();
+    var ast = astFuture.wait();
+
+    var css = ast.toCSS({
+      sourceMap: true,
+      writeSourceMap: function (sm) {
+        sourceMap = JSON.parse(sm);
+      }
+    });
   } catch (e) {
     // less.Parser.parse is supposed to report any errors via its
     // callback. But sometimes, it throws them instead. This is
@@ -42,23 +50,17 @@ Plugin.registerSourceHandler("less", function (compileStep) {
     return;
   }
 
-  var cssFuture = new Future;
-  var css = ast.toCSS({
-    sourceMap: Boolean(true),
-    writeSourceMap: function (sourceMap) {
-      cssFuture.return(sourceMap);
-    }
-  });
 
-  var sourceMap = JSON.parse(cssFuture.wait());
-
-  sourceMap.sources = [compileStep.inputPath];
-  sourceMap.sourcesContent = [source];
+  if (sourceMap) {
+    sourceMap.sources = [compileStep.inputPath];
+    sourceMap.sourcesContent = [source];
+    sourceMap = JSON.stringify(sourceMap);
+  }
 
   compileStep.addStylesheet({
     path: compileStep.inputPath + ".css",
     data: css,
-    sourceMap: JSON.stringify(sourceMap)
+    sourceMap: sourceMap
   });
 });;
 

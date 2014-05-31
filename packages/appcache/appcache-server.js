@@ -57,7 +57,7 @@ var browserEnabled = function(request) {
 
 WebApp.addHtmlAttributeHook(function (request) {
   if (browserEnabled(request))
-    return 'manifest="/app.manifest"';
+    return { manifest: "/app.manifest" };
   else
     return null;
 });
@@ -177,7 +177,8 @@ WebApp.connectHandlers.use(function(req, res, next) {
 var sizeCheck = function() {
   var totalSize = 0;
   _.each(WebApp.clientProgram.manifest, function (resource) {
-    if (resource.cacheable && resource.where === 'client') {
+    if (resource.where === 'client' &&
+        ! RoutePolicy.classify(resource.url)) {
       totalSize += resource.size;
     }
   });

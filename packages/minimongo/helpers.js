@@ -8,7 +8,7 @@ isArray = function (x) {
 // XXX maybe this should be EJSON.isObject, though EJSON doesn't know about
 // RegExp
 // XXX note that _type(undefined) === 3!!!!
-isPlainObject = function (x) {
+isPlainObject = LocalCollection._isPlainObject = function (x) {
   return x && LocalCollection._f._type(x) === 3;
 };
 
@@ -16,7 +16,10 @@ isIndexable = function (x) {
   return isArray(x) || isPlainObject(x);
 };
 
-isOperatorObject = function (valueSelector) {
+// Returns true if this is an object with at least one key and all keys begin
+// with $.  Unless inconsistentOK is set, throws if some keys begin with $ and
+// others don't.
+isOperatorObject = function (valueSelector, inconsistentOK) {
   if (!isPlainObject(valueSelector))
     return false;
 
@@ -26,7 +29,10 @@ isOperatorObject = function (valueSelector) {
     if (theseAreOperators === undefined) {
       theseAreOperators = thisIsOperator;
     } else if (theseAreOperators !== thisIsOperator) {
-      throw new Error("Inconsistent operator: " + valueSelector);
+      if (!inconsistentOK)
+        throw new Error("Inconsistent operator: " +
+                        JSON.stringify(valueSelector));
+      theseAreOperators = false;
     }
   });
   return !!theseAreOperators;  // {} has no operators
